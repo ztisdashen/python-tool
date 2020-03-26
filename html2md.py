@@ -1,4 +1,6 @@
+import os
 from io import TextIOWrapper
+from urllib.parse import urljoin
 
 from lxml import etree
 import re
@@ -26,15 +28,17 @@ def del_with_ul(tag: Element, file: TextIO, space_num=0, prefix=None):
         return
     else:
         for k in li:
-            if not prefix:
-                line = " " * space_num + "* " + k.xpath("./text()")[0].replace("\n", "") + "\n"
-                file.write(line)
-                # print(" " * space_num, "*", k.xpath("./text()")[0].replace("\n", ""))
-            else:
-                line = prefix + " " + " " * space_num + "* " + k.xpath("./text()")[0].replace("\n", "") + "\n"
-                file.write(line)
-                # print(prefix, end="")
-                # print(" " * space_num, "*", k.xpath("./text()")[0].replace("\n", ""))
+            tem_ = k.xpath("./text()")
+            if tem_:
+                if not prefix:
+                    line = " " * space_num + "* " + tem_[0].replace("\n", "") + "\n"
+                    file.write(line)
+                    # print(" " * space_num, "*", k.xpath("./text()")[0].replace("\n", ""))
+                else:
+                    line = prefix + " " + " " * space_num + "* " + tem_[0].replace("\n", "") + "\n"
+                    file.write(line)
+                    # print(prefix, end="")
+                    # print(" " * space_num, "*", k.xpath("./text()")[0].replace("\n", ""))
             tem = k.xpath("./ul")
             if tem is not None and len(tem) > 0:
                 del_with_ul(tem[0], space_num=space_num + 1, file=file)
@@ -64,7 +68,25 @@ def del_with_h(line: str, level: int, file: TextIO):
     """
     :arg
     """
+    # line_html = etree.HTML(line)
+    # line = "".join(line_html.xpath("/html/body//text")).strip()
+    # print(line)
     line = "#" * level + " " + line + "\n"
+    file.write(line)
+
+
+def del_with_h2(s: str, level: int, file: TextIO):
+    """
+    :arg
+    """
+    # line_html = etree.HTML(line)
+    # line = "".join(line_html.xpath("/html/body//text")).strip()
+    # print(line)
+    tem_s_html = etree.HTML(s)
+    xpath = "//h{}//text()".format(level)
+    tem_s = "".join(tem_s_html.xpath(xpath)).strip()
+    tem_s = re.sub("\[.*?\]\(.*?\)", "", tem_s, flags=re.S)
+    line = "#" * level + " " + tem_s + "\n"
     file.write(line)
 
 
@@ -91,7 +113,7 @@ def del_with_table(sub: Element, file: TextIO):
         file.write(row_each)
 
 
-def pre_processing(data: str):
+def pre_processing(data: str,base_url = None):
     # 处理短的代码块
     if data.find("<code>"):
         data = data.replace("<code>", "`").replace("</code>", '`')
@@ -102,12 +124,14 @@ def pre_processing(data: str):
     if data.find("<img"):
         img_urls = re.findall(img_, data)
         for img_url in img_urls:
+            if base_url:
+                img_url = urljoin(base_url,img_url)
             data = re.sub("<img.*?>", "![]({})".format(img_url), data, count=1, flags=re.S)
     return data
 
 
 def del_with_code_block(code_type: str, code: str, file: TextIO):
-    other = ["vue", "xml", "html","java"]
+    other = ["vue", "xml", "html", "java"]
     code_ = code
     if code_type in other:
         code_ = code.replace("&lt;", "<").replace("&gt;", ">")
@@ -115,10 +139,11 @@ def del_with_code_block(code_type: str, code: str, file: TextIO):
     file.write(line)
 
 
-h2 = re.compile("<h2>(.*?)</h2>", re.S)
-h3 = re.compile("<h3>(.*?)</h3>", re.S)
-h4 = re.compile("<h4>(.*?)</h4>", re.S)
+h2 = re.compile("<h2.*?>(.*?)</h2>", re.S)
+h3 = re.compile("<h3.*?>(.*?)</h3>", re.S)
+h4 = re.compile("<h4.*?>(.*?)</h4>", re.S)
 pre = re.compile('<pre><code class="language-(.*?)">(.*?)</code></pre>', re.S)
+pre_ = re.compile('<pre class="language-(.*?)"><code>(.*?)</code></pre>', re.S)
 ul = re.compile("<ul>(.*?)</ul>", re.S)
 code = re.compile(".*?<code>(.*?)</code>.*?", re.S)
 # 普通的<p>标签
@@ -130,14 +155,17 @@ img_ = re.compile("<img.*?src=[\'\"](.*?)[\'\"].*?>", flags=re.S)
 a = re.compile("<a.*?href=[\'\"](.*?)[\'\"]>(.*?)</a>", re.S)
 
 
-def run(html_str: str, xpath: str, file_name: str):
+def run(html_str: str, xpath: str, file_name: str,base_url=None):
     """
+    :param base_url:
     :param html_str 网页html代码
     :param xpath xpath
     :param file_name 输出文件名
     """
     with open(file=file_name, mode="w", encoding="utf-8") as text_file:
-        text_file.write("# " + file_name.split(".")[0] + "\n")
+        (filepath, temp_file_name) = os.path.split(file_name)
+        (filename, extension) = os.path.splitext(temp_file_name)
+        text_file.write("# " + filename + "\n")
         html = etree.HTML(html_str)
         # 处理 a 标签
         texts = html.xpath("//a/text()")
@@ -155,18 +183,26 @@ def run(html_str: str, xpath: str, file_name: str):
             if r4:
                 del_with_code_block(r4.groups()[0], r4.groups()[1], text_file)
                 continue
-            s = pre_processing(s)
-            r1 = re.match(h2, s)
+            # code 另一种code
+            r4_ = re.match(pre_, s)
+            # 其中的代码部分
+            if r4_:
+                del_with_code_block(r4_.groups()[0], r4_.groups()[1], text_file)
+                continue
+            s = pre_processing(s,base_url)
+            r1 = re.search(h2, s)
             if r1:
-                del_with_h(r1.groups()[0], level=2, file=text_file)
+                del_with_h2(s, level=2, file=text_file)
                 continue
             r2 = re.match(h3, s)
             if r2:
-                del_with_h(r2.groups()[0], level=3, file=text_file)
+                # tem_s_html = etree.HTML(s)
+                # tem_s = "".join(tem_s_html.xpath("//h3//text()")).strip()
+                del_with_h2(s, level=3, file=text_file)
                 continue
             r3 = re.match(h4, s)
-            if r2:
-                del_with_h(r3.groups()[0], level=4, file=text_file)
+            if r3:
+                del_with_h2(s, level=4, file=text_file)
                 continue
             r5 = re.match(ul, s)
             if r5:
